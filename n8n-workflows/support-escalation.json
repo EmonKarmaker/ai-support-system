@@ -1,0 +1,162 @@
+{
+  "name": "Support Escalation - Email Notification",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "support-escalation",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.body.user_email }}",
+        "subject": "We received your support request - Ticket #{{ $json.body.ticket_id }}",
+        "emailType": "html",
+        "html": "<!DOCTYPE html>\n<html>\n<head>\n  <style>\n    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }\n    .container { max-width: 600px; margin: 0 auto; padding: 20px; }\n    .header { background: linear-gradient(135deg, #00f5d4 0%, #9b5de5 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; }\n    .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }\n    .ticket-id { background: #e0e0e0; padding: 10px 15px; border-radius: 5px; font-family: monospace; }\n    .footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"header\">\n      <h1>🎫 Support Request Received</h1>\n    </div>\n    <div class=\"content\">\n      <p>Hi {{ $json.body.user_name }},</p>\n      <p>Thank you for reaching out to our support team! We've received your request and a team member will get back to you within 24 hours.</p>\n      <p><strong>Your Ticket ID:</strong></p>\n      <p class=\"ticket-id\">{{ $json.body.ticket_id }}</p>\n      <p><strong>Your Original Query:</strong></p>\n      <p style=\"background: #fff; padding: 15px; border-left: 3px solid #00f5d4;\">{{ $json.body.original_query }}</p>\n      <p>If you have any additional information to add, simply reply to this email.</p>\n      <p>Best regards,<br>TechCorp Support Team</p>\n    </div>\n    <div class=\"footer\">\n      <p>© 2025 TechCorp | <a href=\"#\">Privacy Policy</a></p>\n    </div>\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "send-user-email",
+      "name": "Email to User",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [500, 200],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOUR_GMAIL_CREDENTIAL_ID",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "support@yourdomain.com",
+        "subject": "🚨 New Support Escalation - {{ $json.body.ticket_id }}",
+        "emailType": "html",
+        "html": "<!DOCTYPE html>\n<html>\n<head>\n  <style>\n    body { font-family: Arial, sans-serif; line-height: 1.6; }\n    .container { max-width: 700px; margin: 0 auto; padding: 20px; }\n    .header { background: #f15bb5; color: white; padding: 20px; border-radius: 10px 10px 0 0; }\n    .content { background: #f5f5f5; padding: 25px; }\n    .info-box { background: white; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #9b5de5; }\n    .conversation { background: #fff; padding: 15px; border: 1px solid #ddd; border-radius: 5px; white-space: pre-wrap; max-height: 400px; overflow-y: auto; }\n    .priority { display: inline-block; padding: 5px 15px; background: #ff6b6b; color: white; border-radius: 20px; font-size: 12px; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"header\">\n      <h2>🚨 Support Escalation Required</h2>\n      <span class=\"priority\">{{ $json.body.priority | upper }}</span>\n    </div>\n    <div class=\"content\">\n      <div class=\"info-box\">\n        <strong>📋 Ticket ID:</strong> {{ $json.body.ticket_id }}<br>\n        <strong>📧 Customer Email:</strong> {{ $json.body.user_email }}<br>\n        <strong>👤 Customer Name:</strong> {{ $json.body.user_name }}<br>\n        <strong>🕐 Timestamp:</strong> {{ $json.body.timestamp }}<br>\n        <strong>🔗 Session ID:</strong> {{ $json.body.session_id }}\n      </div>\n      \n      <h3>Original Query:</h3>\n      <div class=\"info-box\">{{ $json.body.original_query }}</div>\n      \n      <h3>Conversation Summary:</h3>\n      <div class=\"conversation\">{{ $json.body.conversation_summary }}</div>\n      \n      <p style=\"margin-top: 20px;\"><strong>Action Required:</strong> Please respond to the customer within 24 hours.</p>\n    </div>\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "send-support-email",
+      "name": "Email to Support Team",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [500, 400],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOUR_GMAIL_CREDENTIAL_ID",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "status",
+              "value": "success"
+            },
+            {
+              "name": "message",
+              "value": "Escalation emails sent successfully"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-response",
+      "name": "Set Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [750, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [950, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Email to User",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email to Support Team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email to User": {
+      "main": [
+        [
+          {
+            "node": "Set Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email to Support Team": {
+      "main": [
+        [
+          {
+            "node": "Set Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "id": "1",
+      "name": "support"
+    },
+    {
+      "id": "2", 
+      "name": "automation"
+    }
+  ],
+  "triggerCount": 0,
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": ""
+  }
+}
