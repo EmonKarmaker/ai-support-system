@@ -551,8 +551,8 @@ MIT License - Free for personal and commercial use.
 
 **Emon**
 
-- GitHub: [your-github](https://github.com/YOUR_USERNAME)
-- LinkedIn: [your-linkedin](https://linkedin.com/in/YOUR_USERNAME)
+- GitHub: [your-github](https://github.com/EmonKarmaker)
+
 
 ---
 
