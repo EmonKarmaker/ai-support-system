@@ -1,14 +1,12 @@
 """
-RAG System with Pinecone Vector Database + Sentence Transformers + Groq LLM
-All Free Tier Compatible
+RAG System with Pinecone + HuggingFace API + Groq LLM
+Optimized for low memory (Render Free Tier)
 """
 
 import os
 from typing import List, Dict, Optional
 import httpx
 from pinecone import Pinecone, ServerlessSpec
-from sentence_transformers import SentenceTransformer
-import json
 
 from config import settings
 
@@ -17,18 +15,16 @@ class RAGSystem:
     def __init__(self):
         self.pc: Optional[Pinecone] = None
         self.index = None
-        self.embedding_model = None
-        self.groq_model = "llama-3.3-70b-versatile"  # Free tier
-        self.embedding_dimension = 384  # all-MiniLM-L6-v2 dimension
+        self.groq_model = "llama-3.3-70b-versatile"
+        self.embedding_dimension = 384
+        self.hf_model = "sentence-transformers/all-MiniLM-L6-v2"
         
     async def initialize(self):
-        """Initialize Pinecone and embedding model"""
+        """Initialize Pinecone connection"""
         print("🔄 Initializing RAG System...")
         
-        # Initialize Pinecone
         self.pc = Pinecone(api_key=settings.PINECONE_API_KEY)
         
-        # Check if index exists, if not create it
         existing_indexes = [idx.name for idx in self.pc.list_indexes()]
         
         if settings.PINECONE_INDEX_NAME not in existing_indexes:
@@ -39,28 +35,30 @@ class RAGSystem:
                 metric="cosine",
                 spec=ServerlessSpec(
                     cloud="aws",
-                    region="us-east-1"  # Free tier region
+                    region="us-east-1"
                 )
             )
         
-        # Connect to index
         self.index = self.pc.Index(settings.PINECONE_INDEX_NAME)
-        
-        # Load embedding model locally (free, no API needed)
-        print("🧠 Loading embedding model...")
-        self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-        
         print("✅ RAG System initialized")
         
-    def get_embedding(self, text: str) -> List[float]:
-        """Get embeddings using local sentence-transformers model"""
-        embedding = self.embedding_model.encode(text)
-        return embedding.tolist()
-    
-    def get_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
-        """Get embeddings for multiple texts at once (faster)"""
-        embeddings = self.embedding_model.encode(texts)
-        return embeddings.tolist()
+    async def get_embedding(self, text: str) -> List[float]:
+        """Get embeddings from HuggingFace API (free, no local memory)"""
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"https://api-inference.huggingface.co/pipeline/feature-extraction/{self.hf_model}",
+                headers={"Authorization": f"Bearer {settings.HF_TOKEN}"},
+                json={"inputs": text, "options": {"wait_for_model": True}},
+                timeout=60.0
+            )
+            response.raise_for_status()
+            embedding = response.json()
+            
+            if isinstance(embedding[0], list):
+                import numpy as np
+                embedding = np.mean(embedding, axis=1).tolist()[0]
+            
+            return embedding
     
     async def add_document(
         self,
@@ -70,16 +68,14 @@ class RAGSystem:
         metadata: Optional[Dict] = None
     ):
         """Add single document to Pinecone"""
-        embedding = self.get_embedding(f"{title} {content}")
+        embedding = await self.get_embedding(f"{title} {content}")
         
-        # Prepare metadata
         meta = {
             "title": title,
-            "content": content[:1000],  # Pinecone metadata limit
+            "content": content[:1000],
             **(metadata or {})
         }
         
-        # Upsert to Pinecone
         self.index.upsert(vectors=[{
             "id": doc_id,
             "values": embedding,
@@ -87,17 +83,14 @@ class RAGSystem:
         }])
         
     async def add_documents_batch(self, documents: List[Dict]):
-        """Add multiple documents at once (faster)"""
-        # Prepare texts for batch embedding
-        texts = [f"{doc['title']} {doc['content']}" for doc in documents]
-        embeddings = self.get_embeddings_batch(texts)
-        
-        # Prepare vectors for upsert
+        """Add multiple documents"""
         vectors = []
-        for i, doc in enumerate(documents):
+        for doc in documents:
+            text = f"{doc['title']} {doc['content']}"
+            embedding = await self.get_embedding(text)
             vectors.append({
                 "id": doc["id"],
-                "values": embeddings[i],
+                "values": embedding,
                 "metadata": {
                     "title": doc["title"],
                     "content": doc["content"][:1000],
@@ -105,13 +98,12 @@ class RAGSystem:
                     "product": doc.get("product", "general")
                 }
             })
+            print(f"📤 Embedded: {doc['title'][:50]}...")
         
-        # Upsert in batches of 100 (Pinecone limit)
         batch_size = 100
         for i in range(0, len(vectors), batch_size):
             batch = vectors[i:i + batch_size]
             self.index.upsert(vectors=batch)
-            print(f"📤 Uploaded batch {i//batch_size + 1}/{(len(vectors)-1)//batch_size + 1}")
     
     async def search_similar(
         self,
@@ -119,10 +111,9 @@ class RAGSystem:
         top_k: int = 5,
         filter_dict: Optional[Dict] = None
     ) -> List[Dict]:
-        """Search for similar documents in Pinecone"""
-        query_embedding = self.get_embedding(query)
+        """Search for similar documents"""
+        query_embedding = await self.get_embedding(query)
         
-        # Query Pinecone
         results = self.index.query(
             vector=query_embedding,
             top_k=top_k,
@@ -130,7 +121,6 @@ class RAGSystem:
             filter=filter_dict
         )
         
-        # Format results
         documents = []
         for match in results.matches:
             documents.append({
@@ -152,58 +142,39 @@ class RAGSystem:
     ) -> Dict:
         """Generate RAG response using Groq"""
         
-        # 1. Build filter if category specified
         filter_dict = None
         if filter_category:
             filter_dict = {"category": {"$eq": filter_category}}
         
-        # 2. Search for relevant context
         relevant_docs = await self.search_similar(query, top_k=5, filter_dict=filter_dict)
         
-        # 3. Build context from retrieved documents
         context_parts = []
         for doc in relevant_docs:
-            context_parts.append(f"**{doc['title']}** (Category: {doc['category']})\n{doc['content']}")
+            context_parts.append(f"**{doc['title']}**\n{doc['content']}")
         
-        context = "\n\n---\n\n".join(context_parts) if context_parts else "No specific information found in knowledge base."
+        context = "\n\n---\n\n".join(context_parts) if context_parts else "No specific information found."
         
-        # 4. Build chat history context
         history_text = ""
         if chat_history:
             history_text = "\n".join([
                 f"{msg.role.upper()}: {msg.content}"
-                for msg in chat_history[-5:]  # Last 5 messages
+                for msg in chat_history[-5:]
             ])
         
-        # 5. Create prompt
-        system_prompt = """You are a helpful, friendly customer support assistant for TechStore - an electronics and e-commerce company.
+        system_prompt = """You are a helpful customer support assistant for TechStore.
+Answer based on the provided context. Be concise and helpful.
+If you can't answer from context, offer to connect with human support."""
 
-Your job is to:
-1. Answer questions based on the provided knowledge base context
-2. Be concise but thorough
-3. If you're not sure about something, say so honestly
-4. If the user's question can't be answered from the context, acknowledge this and offer to connect them with human support
-
-IMPORTANT GUIDELINES:
-- Always be polite and professional
-- Use the context provided to give accurate answers
-- If context doesn't contain the answer, say "I don't have specific information about that, but I can connect you with our support team"
-- For product recommendations, consider the user's needs
-- Keep responses focused and helpful
-- If user seems frustrated, acknowledge their feelings and offer escalation"""
-
-        user_prompt = f"""## Knowledge Base Context:
+        user_prompt = f"""Context:
 {context}
 
-## Recent Conversation:
+Conversation:
 {history_text}
 
-## Customer Question:
-{query}
+Question: {query}
 
-Please provide a helpful response based on the context above."""
+Provide a helpful response."""
 
-        # 6. Call Groq API
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 "https://api.groq.com/openai/v1/chat/completions",
@@ -227,7 +198,6 @@ Please provide a helpful response based on the context above."""
         
         assistant_response = result["choices"][0]["message"]["content"]
         
-        # 7. Calculate confidence score
         confidence = self._calculate_confidence(relevant_docs)
         
         return {
@@ -238,21 +208,14 @@ Please provide a helpful response based on the context above."""
         }
     
     def _calculate_confidence(self, docs: List[Dict]) -> float:
-        """Calculate confidence score based on retrieved documents"""
         if not docs:
             return 0.3
-        
-        # Use similarity scores
         scores = [doc.get("score", 0.5) for doc in docs]
         avg_score = sum(scores) / len(scores)
-        
-        # Boost if multiple relevant docs found
         doc_factor = min(len(docs) / 3, 1.0)
-        
         return min(avg_score * doc_factor * 1.2, 1.0)
     
     async def get_document_count(self) -> int:
-        """Get total document count from Pinecone"""
         try:
             stats = self.index.describe_index_stats()
             return stats.total_vector_count
@@ -260,6 +223,4 @@ Please provide a helpful response based on the context above."""
             return 0
     
     async def delete_all_documents(self):
-        """Delete all documents from index (use carefully!)"""
         self.index.delete(delete_all=True)
-        print("🗑️ All documents deleted from index")
